@@ -9,7 +9,7 @@
 <html>
 <head>
     <title>Manual Importer</title>
-    <form action="/api/importFeedToChannel">
+    <form action="/api/importFeedToChannel" method="post" >
         <label>Feed Name:</label>
         <input type="url" name="feedname" /><br>
         <label>Channel Name:</label>
