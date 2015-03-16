@@ -1,8 +1,7 @@
 package com.eweware.heardimporter;
 
 import com.eweware.feedimport.*;
-import com.eweware.heard.Blah;
-import com.eweware.heard.BlahType;
+import com.eweware.heard.*;
 import com.google.appengine.api.images.ImagesService;
 import com.google.appengine.api.images.ImagesServiceFactory;
 import com.google.appengine.api.images.ServingUrlOptions;
@@ -12,6 +11,7 @@ import com.google.appengine.api.urlfetch.URLFetchService;
 import com.google.appengine.api.urlfetch.URLFetchServiceFactory;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import com.sun.tools.internal.ws.wsdl.document.Import;
 
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
@@ -24,10 +24,8 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.UUID;
+import java.text.SimpleDateFormat;
+import java.util.*;
 
 /**
  * Created by ultradad on 3/10/15.
@@ -36,69 +34,188 @@ public class ImportFeedToChannel extends HttpServlet {
 
     private final String qaServerURL = "http://qa.rest.goheard.com:8080/v2/";
     private final String prodServerURL = "http://qa.rest.goheard.com/v2/";
-    private final String HeardServerURL = qaServerURL;
+    private final String devServerURL = "http://localhost:8090/v2/";
+    private final String HeardServerURL = devServerURL;
     private String blahTypeSays = null;
-
+    private final String adminUsername = "davevr";
+    private final String adminPassword = "Sheep";
+    private static Boolean isImporting = false;
+    private static Integer totalItems = 0;
 
     protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-        final String feedStr = request.getParameter("feedname");
-        final String channelId = request.getParameter("channel");
-        final String username = request.getParameter("username");
-        final String password = request.getParameter("password");
-        Boolean isSignedIn = false;
 
-        // read a feed
-        String googleParserURL = "http://ajax.googleapis.com/ajax/services/feed/load?v=1.0&num=100&q=";
-        String finalURL = googleParserURL + URLEncoder.encode(feedStr,"UTF-8");
-
-        if (!SignInToHeard(username, password)) {
-            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            return;
-        }
-
-        if (blahTypeSays == null) {
-            blahTypeSays = GetBlahTypeByName("says");
-        }
-
-
-        URLFetchService fetchService = URLFetchServiceFactory.getURLFetchService();
-
-        HTTPResponse fetchResponse = fetchService.fetch(new URL(finalURL));
-        byte[] theData = fetchResponse.getContent();
-        String theJSON = new String (theData, "UTF-8");
-
-        Gson gson = new Gson();
-        Response feedResponse = gson.fromJson(theJSON, Response.class);
-        Date lastImportDate = new Date();
-
-        if ((feedResponse != null) && (feedResponse.responseData != null) &&
-                (feedResponse.responseData.feed != null) && (feedResponse.responseData.feed.entries != null)) {
-            // we have data, now load it!
-            for (Entries curEntry : feedResponse.responseData.feed.entries) {
-                //Entries curEntry = (Entries)curObj;
-                if (curEntry.getPublishedDate().before(lastImportDate)) {
-                    // date is good
-                    System.out.println("using:" + curEntry.title + " - " + curEntry.link);
-                    String embedlyURL = "http://api.embed.ly/1/extract?key=16357551b6a84e6c88debee64dcd8bf3&maxwidth=500&url=" + URLEncoder.encode(curEntry.getLink(), "UTF-8");
-                    HTTPResponse embedlyResponse = fetchService.fetch(new URL(embedlyURL));
-                    byte[] embedData = embedlyResponse.getContent();
-                    String embedJSON = new String (embedData, "UTF-8");
-
-                    ParsedPage thePage = gson.fromJson(embedJSON, ParsedPage.class);
-
-                    if (thePage != null) {
-                        UploadPageAsNewBlah(thePage, channelId);
+        if (!isImporting) {
+            try {
+                isImporting = true;
+                totalItems = 0;
+                if (SignInToHeard(adminUsername, adminPassword)) {
+                    if (blahTypeSays == null) {
+                        blahTypeSays = GetBlahTypeByName("says");
                     }
 
-                } else {
-                    System.out.println("skipping:" + curEntry.title + " - " + curEntry.link);
+                    List<Channel> channelList = GetAllChannels();
+
+
+
+                    if (channelList != null) {
+                        importChannels(channelList);
+                    }
+
+                    SignOutOfHeard();
                 }
 
+                response.setStatus(HttpServletResponse.SC_OK);
+                PrintWriter out = response.getWriter();
+                out.write("Imported " + totalItems + " items");
+                out.flush();
+                out.close();
+            } catch (Exception exp) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                PrintWriter out = response.getWriter();
+                out.write(exp.getMessage());
+                out.flush();
+                out.close();
+                System.err.println(exp.getMessage());
+            } finally {
+                isImporting = false;
             }
+
+        } else {
+            response.setStatus(HttpServletResponse.SC_CONFLICT);
+            PrintWriter out = response.getWriter();
+            out.write("Import already running");
+            out.flush();
+            out.close();
         }
 
-        SignOutOfHeard();
-        response.setStatus(HttpServletResponse.SC_OK);
+    }
+
+    private void importChannels(List<Channel> channelList) {
+        try {
+            for (Channel curChannel : channelList) {
+                System.out.println("importing channel " + curChannel.N);
+                importChannel(curChannel);
+            }
+        } catch (Exception exp) {
+            System.err.println(exp.getMessage());
+        }
+    }
+
+    private void importChannel(Channel theChannel) {
+        try {
+            List<ImportRecord>  importRecords = GetImportRecords(theChannel._id);
+
+            if ((importRecords != null) && (importRecords.size() > 0)) {
+                System.out.println("  found " + importRecords.size() + " feeds");
+                for (ImportRecord curRec : importRecords) {
+                    processImportRecord(curRec);
+                }
+            } else {
+                System.out.println("channel " + theChannel.N + " has no feeds defined");
+            }
+        } catch (Exception exp) {
+            System.err.println(exp.getMessage());
+        }
+    }
+
+    private void processImportRecord(ImportRecord theRecord) {
+        try {
+            if ((theRecord.autoimport != null) && theRecord.autoimport) {
+                String userName = theRecord.importusername;
+                String password = theRecord.importpassword;
+
+                if ((!userName.isEmpty()) && (!password.isEmpty())) {
+                    if (theRecord.feedtype == 0) {
+                        processRSSImportRecord(theRecord);
+                    }
+                }
+            }
+        } catch (Exception exp) {
+            System.err.println(exp.getMessage());
+        }
+    }
+
+    private void processRSSImportRecord(ImportRecord theRecord) {
+        try {
+            Date cutoffDate = theRecord.getLastImportDate();
+            importRssFeedToChannel(theRecord.channel, theRecord.RSSurl, theRecord.importusername, theRecord.importpassword, cutoffDate);
+            UpdateLastImportDate(theRecord);
+        } catch (Exception exp) {
+            System.err.println(exp.getMessage());
+        }
+    }
+
+    private void UpdateLastImportDate(ImportRecord theRecord) {
+
+        if (SignInToHeard(adminUsername, adminPassword)) {
+            try {
+                String putURL = HeardServerURL + "groups/importers/" + theRecord._id;
+                ImporterUpdateRecord updateRec = new ImporterUpdateRecord();
+                updateRec._id = theRecord._id;
+                updateRec.channel = theRecord.channel;
+                updateRec.lastimport = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.ENGLISH).format(new Date());
+                String jsonContent = new Gson().toJson(updateRec, ImporterUpdateRecord.class);
+
+                sendJsonPutRequest(putURL, jsonContent, true);
+            } catch (Exception exp) {
+                System.err.println(exp.getMessage());
+            } finally {
+                SignOutOfHeard();
+            }
+        }
+    }
+
+    private void importRssFeedToChannel(String channelId, String feedStr, String username, String password, Date cutoffDate) {
+
+        try {
+            String googleParserURL = "http://ajax.googleapis.com/ajax/services/feed/load?v=1.0&num=100&q=";
+            String finalURL = googleParserURL + URLEncoder.encode(feedStr,"UTF-8");
+
+            if (!SignInToHeard(username, password)) {
+                return;
+            }
+
+            URLFetchService fetchService = URLFetchServiceFactory.getURLFetchService();
+
+            HTTPResponse fetchResponse = fetchService.fetch(new URL(finalURL));
+            byte[] theData = fetchResponse.getContent();
+            String theJSON = new String (theData, "UTF-8");
+
+            Gson gson = new Gson();
+            Response feedResponse = gson.fromJson(theJSON, Response.class);
+
+            if ((feedResponse != null) && (feedResponse.responseData != null) &&
+                    (feedResponse.responseData.feed != null) && (feedResponse.responseData.feed.entries != null)) {
+                // we have data, now load it!
+                for (Entries curEntry : feedResponse.responseData.feed.entries) {
+                    //Entries curEntry = (Entries)curObj;
+                    if ((cutoffDate == null) || (curEntry.getPublishedDate().after(cutoffDate))) {
+                        // date is good
+                        System.out.println("using:" + curEntry.title + " - " + curEntry.link);
+                        String embedlyURL = "http://api.embed.ly/1/extract?key=16357551b6a84e6c88debee64dcd8bf3&maxwidth=500&url=" + URLEncoder.encode(curEntry.getLink(), "UTF-8");
+                        HTTPResponse embedlyResponse = fetchService.fetch(new URL(embedlyURL));
+                        byte[] embedData = embedlyResponse.getContent();
+                        String embedJSON = new String (embedData, "UTF-8");
+
+                        ParsedPage thePage = gson.fromJson(embedJSON, ParsedPage.class);
+
+                        if (thePage != null) {
+                            UploadPageAsNewBlah(thePage, channelId);
+                        }
+
+                    } else {
+                        System.out.println("skipping existing item:" + curEntry.title + " - " + curEntry.link);
+                    }
+
+                }
+            }
+
+        } catch (Exception exp) {
+            System.err.println(exp.getMessage());
+        } finally {
+            SignOutOfHeard();
+        }
+
     }
 
 
@@ -127,7 +244,61 @@ public class ImportFeedToChannel extends HttpServlet {
             writer.close();
             responseStr="Response code: "+connection.getResponseCode()+" and mesg:"+connection.getResponseMessage();
 
-            System.out.println(connection.getResponseMessage());
+            //System.out.println(connection.getResponseMessage());
+
+
+            InputStream response;
+
+            // Check for error , if none store response
+            if(connection.getResponseCode() / 100 == 2){
+                response = connection.getInputStream();
+            }else{
+                response = connection.getErrorStream();
+            }
+            InputStreamReader isr = new InputStreamReader(response);
+            StringBuilder sb = new StringBuilder();
+            BufferedReader br = new BufferedReader(isr);
+            String read = br.readLine();
+            while(read != null){
+                sb.append(read);
+                read = br.readLine();
+            }
+
+            connection.disconnect();
+            responseStr = sb.toString();
+        } catch (Exception exp) {
+            System.err.println("Error forming request");
+        }
+
+        return responseStr;
+    }
+
+    public static String sendJsonPutRequest(String postURL, String jsonContent, Boolean useJSON) {
+        String responseStr=null;
+
+        try {
+            URL url = new URL(postURL);
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+
+            connection.setDoOutput(true);
+            connection.setDoInput(true);
+            connection.setInstanceFollowRedirects(false);
+            connection.setRequestMethod("PUT");
+            if (useJSON)
+                connection.setRequestProperty("Content-Type", "application/json");
+            else
+                connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+            connection.setRequestProperty("charset", "utf-8");
+            connection.setRequestProperty("Content-Length", "" + Integer.toString(jsonContent.getBytes().length));
+            connection.setUseCaches(false);
+
+            OutputStreamWriter writer = new OutputStreamWriter(connection.getOutputStream(), "UTF-8");
+            writer.write(jsonContent);
+            writer.close();
+            responseStr="Response code: "+connection.getResponseCode()+" and msg:"+connection.getResponseMessage();
+
+            //System.out.println(connection.getResponseMessage());
 
 
             InputStream response;
@@ -157,7 +328,6 @@ public class ImportFeedToChannel extends HttpServlet {
     }
 
 
-
     private String getJsonDataFromURL(String getURL, String jsonData) {
         String resultStr = null;
 
@@ -172,6 +342,39 @@ public class ImportFeedToChannel extends HttpServlet {
         }
 
         return resultStr;
+    }
+
+    private List<ImportRecord> GetImportRecords(String groupId) {
+
+        SignInToHeard(adminUsername, adminPassword);
+        List<ImportRecord>  recordList = null;
+        String importUrl = HeardServerURL + "groups/" + groupId + "/importers";
+        String jsonData = "{}";
+        String jsonResponse = getJsonDataFromURL(importUrl, jsonData);
+
+        if (!jsonResponse.isEmpty()) {
+            Type listType = new TypeToken<ArrayList<ImportRecord>>() {}.getType();
+            recordList = new Gson().fromJson(jsonResponse, listType);
+        }
+
+        SignOutOfHeard();
+        return recordList;
+
+    }
+
+    private List<Channel> GetAllChannels() {
+        List<Channel>  recordList = null;
+        String importUrl = HeardServerURL + "groups/";
+        String jsonData = "{}";
+        String jsonResponse = getJsonDataFromURL(importUrl, jsonData);
+
+        if (!jsonResponse.isEmpty()) {
+            Type listType = new TypeToken<ArrayList<Channel>>() {}.getType();
+            recordList = new Gson().fromJson(jsonResponse, listType);
+        }
+
+        return recordList;
+
     }
 
     private String GetBlahTypeByName(String typeName) {
@@ -272,13 +475,16 @@ public class ImportFeedToChannel extends HttpServlet {
         } else
             newBlah.M = null;
 
-        //newBlah.XX = true;
+        newBlah.XX = false; // not anonymous
         //newBlah.XXX = false;
 
         Gson gson = new Gson();
         String jsonStr = gson.toJson(newBlah, Blah.class);
+        String createUrl = HeardServerURL + "blahs";
+        String resultStr = sendJsonPostRequest(createUrl, jsonStr, true);
 
-        System.out.println(jsonStr);
+        totalItems++;
+
     }
 
 
@@ -309,13 +515,6 @@ public class ImportFeedToChannel extends HttpServlet {
 
         return finalStr;
     }
-
-
- /*
-
-        CallPostMethod("blahs", JSON.stringify(param), OnSuccess, OnFailure);
-    };
-    */
 
 
     @Override

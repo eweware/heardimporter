@@ -11,7 +11,6 @@ public class ParsedPage{
    	private String description;
    	private List embeds;
    	private List entities;
-   	private String favicon_colors;
    	private String favicon_url;
    	private List<Images> images;
    	private List<Keywords> keywords;
@@ -71,12 +70,6 @@ public class ParsedPage{
 	}
 	public void setEntities(List entities){
 		this.entities = entities;
-	}
- 	public String getFavicon_colors(){
-		return this.favicon_colors;
-	}
-	public void setFavicon_colors(String favicon_colors){
-		this.favicon_colors = favicon_colors;
 	}
  	public String getFavicon_url(){
 		return this.favicon_url;
