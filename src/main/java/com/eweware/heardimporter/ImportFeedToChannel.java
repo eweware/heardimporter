@@ -26,12 +26,14 @@ import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Created by ultradad on 3/10/15.
  */
 public class ImportFeedToChannel extends HttpServlet {
-
+    private static final Logger log = Logger.getLogger(ImportFeedToChannel.class.getName());
     private final String qaServerURL = "http://qa.rest.goheard.com:8080/v2/";
     private final String prodServerURL = "http://qa.rest.goheard.com/v2/";
     private final String devServerURL = "http://localhost:8090/v2/";
@@ -40,14 +42,16 @@ public class ImportFeedToChannel extends HttpServlet {
     private final String adminUsername = "davevr";
     private final String adminPassword = "Sheep";
     private static Boolean isImporting = false;
-    private static Integer totalItems = 0;
+    private static Integer totalNewItems = 0;
+    private static Integer totalExistingItems = 0;
 
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
 
         if (!isImporting) {
             try {
                 isImporting = true;
-                totalItems = 0;
+                totalNewItems = 0;
+                totalExistingItems = 0;
                 if (SignInToHeard(adminUsername, adminPassword)) {
                     if (blahTypeSays == null) {
                         blahTypeSays = GetBlahTypeByName("says");
@@ -66,7 +70,7 @@ public class ImportFeedToChannel extends HttpServlet {
 
                 response.setStatus(HttpServletResponse.SC_OK);
                 PrintWriter out = response.getWriter();
-                out.write("Imported " + totalItems + " items");
+                out.write("Imported " + totalNewItems + " items, skipped " + totalExistingItems + " existing items");
                 out.flush();
                 out.close();
             } catch (Exception exp) {
@@ -75,6 +79,7 @@ public class ImportFeedToChannel extends HttpServlet {
                 out.write(exp.getMessage());
                 out.flush();
                 out.close();
+                log.log(Level.SEVERE, exp.toString(), exp);
                 System.err.println(exp.getMessage());
             } finally {
                 isImporting = false;
@@ -82,6 +87,7 @@ public class ImportFeedToChannel extends HttpServlet {
 
         } else {
             response.setStatus(HttpServletResponse.SC_CONFLICT);
+            log.log(Level.WARNING, "Importer tried to run while it was already running");
             PrintWriter out = response.getWriter();
             out.write("Import already running");
             out.flush();
@@ -93,11 +99,11 @@ public class ImportFeedToChannel extends HttpServlet {
     private void importChannels(List<Channel> channelList) {
         try {
             for (Channel curChannel : channelList) {
-                System.out.println("importing channel " + curChannel.N);
+                log.log(Level.INFO, "importing channel " + curChannel.N);
                 importChannel(curChannel);
             }
         } catch (Exception exp) {
-            System.err.println(exp.getMessage());
+            log.log(Level.SEVERE, exp.toString(), exp);
         }
     }
 
@@ -106,15 +112,15 @@ public class ImportFeedToChannel extends HttpServlet {
             List<ImportRecord>  importRecords = GetImportRecords(theChannel._id);
 
             if ((importRecords != null) && (importRecords.size() > 0)) {
-                System.out.println("  found " + importRecords.size() + " feeds");
+                log.log(Level.INFO,"  found " + importRecords.size() + " feeds");
                 for (ImportRecord curRec : importRecords) {
                     processImportRecord(curRec);
                 }
             } else {
-                System.out.println("channel " + theChannel.N + " has no feeds defined");
+                log.log(Level.INFO, "channel " + theChannel.N + " has no feeds defined");
             }
         } catch (Exception exp) {
-            System.err.println(exp.getMessage());
+            log.log(Level.SEVERE, exp.toString(), exp);
         }
     }
 
@@ -131,7 +137,7 @@ public class ImportFeedToChannel extends HttpServlet {
                 }
             }
         } catch (Exception exp) {
-            System.err.println(exp.getMessage());
+            log.log(Level.SEVERE, exp.toString(), exp);
         }
     }
 
@@ -141,7 +147,7 @@ public class ImportFeedToChannel extends HttpServlet {
             importRssFeedToChannel(theRecord.channel, theRecord.RSSurl, theRecord.importusername, theRecord.importpassword, cutoffDate);
             UpdateLastImportDate(theRecord);
         } catch (Exception exp) {
-            System.err.println(exp.getMessage());
+            log.log(Level.SEVERE, exp.toString(), exp);
         }
     }
 
@@ -158,7 +164,7 @@ public class ImportFeedToChannel extends HttpServlet {
 
                 sendJsonPutRequest(putURL, jsonContent, true);
             } catch (Exception exp) {
-                System.err.println(exp.getMessage());
+                log.log(Level.SEVERE, exp.toString(), exp);
             } finally {
                 SignOutOfHeard();
             }
@@ -191,7 +197,7 @@ public class ImportFeedToChannel extends HttpServlet {
                     //Entries curEntry = (Entries)curObj;
                     if ((cutoffDate == null) || (curEntry.getPublishedDate().after(cutoffDate))) {
                         // date is good
-                        System.out.println("using:" + curEntry.title + " - " + curEntry.link);
+                        log.log(Level.INFO, "using:" + curEntry.title + " - " + curEntry.link);
                         String embedlyURL = "http://api.embed.ly/1/extract?key=16357551b6a84e6c88debee64dcd8bf3&maxwidth=500&url=" + URLEncoder.encode(curEntry.getLink(), "UTF-8");
                         HTTPResponse embedlyResponse = fetchService.fetch(new URL(embedlyURL));
                         byte[] embedData = embedlyResponse.getContent();
@@ -204,14 +210,15 @@ public class ImportFeedToChannel extends HttpServlet {
                         }
 
                     } else {
-                        System.out.println("skipping existing item:" + curEntry.title + " - " + curEntry.link);
+                        log.log(Level.INFO, "skipping existing item:" + curEntry.title + " - " + curEntry.link);
+                        totalExistingItems++;
                     }
 
                 }
             }
 
         } catch (Exception exp) {
-            System.err.println(exp.getMessage());
+            log.log(Level.SEVERE, exp.toString(), exp);
         } finally {
             SignOutOfHeard();
         }
@@ -244,7 +251,7 @@ public class ImportFeedToChannel extends HttpServlet {
             writer.close();
             responseStr="Response code: "+connection.getResponseCode()+" and mesg:"+connection.getResponseMessage();
 
-            //System.out.println(connection.getResponseMessage());
+            log.log(Level.FINE, responseStr);
 
 
             InputStream response;
@@ -267,7 +274,7 @@ public class ImportFeedToChannel extends HttpServlet {
             connection.disconnect();
             responseStr = sb.toString();
         } catch (Exception exp) {
-            System.err.println("Error forming request");
+            log.log(Level.SEVERE, exp.toString(), exp);
         }
 
         return responseStr;
@@ -298,7 +305,7 @@ public class ImportFeedToChannel extends HttpServlet {
             writer.close();
             responseStr="Response code: "+connection.getResponseCode()+" and msg:"+connection.getResponseMessage();
 
-            //System.out.println(connection.getResponseMessage());
+            log.log(Level.FINE, responseStr);
 
 
             InputStream response;
@@ -321,7 +328,7 @@ public class ImportFeedToChannel extends HttpServlet {
             connection.disconnect();
             responseStr = sb.toString();
         } catch (Exception exp) {
-            System.err.println("Error forming request");
+            log.log(Level.SEVERE, exp.toString(), exp);
         }
 
         return responseStr;
@@ -338,7 +345,7 @@ public class ImportFeedToChannel extends HttpServlet {
             byte[] theData = fetchResponse.getContent();
             resultStr = new String (theData, "UTF-8");
         } catch (Exception exp) {
-
+            log.log(Level.SEVERE, exp.toString(), exp);
         }
 
         return resultStr;
@@ -444,7 +451,7 @@ public class ImportFeedToChannel extends HttpServlet {
             finalURL = sendJsonPostRequest("http://heard-test-001.appspot.com/api/image/url", jsonData, false);
 
         } catch (Exception exp) {
-            System.err.println(exp.getMessage());
+            log.log(Level.SEVERE, exp.toString(), exp);
         }
 
 
@@ -482,8 +489,7 @@ public class ImportFeedToChannel extends HttpServlet {
         String jsonStr = gson.toJson(newBlah, Blah.class);
         String createUrl = HeardServerURL + "blahs";
         String resultStr = sendJsonPostRequest(createUrl, jsonStr, true);
-
-        totalItems++;
+        totalNewItems++;
 
     }
 
