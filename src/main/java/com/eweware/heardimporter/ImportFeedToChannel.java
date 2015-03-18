@@ -461,7 +461,7 @@ public class ImportFeedToChannel extends HttpServlet {
     private void CreateImportBlah(String channelId, String title, String body, String imageURL, String appendedURL)  {
 
         if (!title.isEmpty())
-            title = truncate(title, 64);
+            title = truncate(title, 255);
 
         if ((appendedURL != null) && (!appendedURL.isEmpty()))
             body += "\n\n" + appendedURL;
