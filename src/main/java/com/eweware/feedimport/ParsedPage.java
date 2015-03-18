@@ -2,6 +2,7 @@
 package com.eweware.feedimport;
 
 import java.util.List;
+import com.eweware.feedimport.*;
 
 public class ParsedPage{
    	private List app_links;
