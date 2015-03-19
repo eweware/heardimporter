@@ -12,15 +12,33 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpression;
+import javax.xml.xpath.XPathFactory;
+
+import com.sun.javafx.fxml.builder.URLBuilder;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 /**
  * Created by ultradad on 3/10/15.
@@ -156,7 +174,11 @@ public class ImportFeedToChannel extends HttpServlet {
     private void processRSSImportRecord(ImportRecord theRecord) {
         try {
             Date cutoffDate = theRecord.getLastImportDate();
-            importRssFeedToChannel(theRecord.channel, theRecord.RSSurl, theRecord.importusername, theRecord.importpassword, cutoffDate);
+            Boolean useSourceImage = theRecord.usefeedimage;
+            if (useSourceImage == null)
+                useSourceImage = false;
+
+            importRssFeedToChannel(theRecord.channel, theRecord.RSSurl, theRecord.importusername, theRecord.importpassword, cutoffDate, useSourceImage);
             UpdateLastImportDate(theRecord);
         } catch (Exception exp) {
             log.log(Level.SEVERE, exp.toString(), exp);
@@ -183,11 +205,70 @@ public class ImportFeedToChannel extends HttpServlet {
         }
     }
 
-    private void importRssFeedToChannel(String channelId, String feedStr, String username, String password, Date cutoffDate) {
+    private String extractNextPageURL(String sourceURL) {
+        String nextURL = null;
+        try {
+            DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+            DocumentBuilder db = dbf.newDocumentBuilder();
+            Document doc = db.parse(sourceURL);
+            doc.getDocumentElement().normalize();
+            Node root = doc.getDocumentElement();
 
+            XPathFactory xFactory = XPathFactory.newInstance();
+            XPath xPath = xFactory.newXPath();
+
+            XPathExpression xExpress = xPath.compile("/rss/channel/*[local-name()='link'][@rel='next']");
+            NodeList nodes = (NodeList) xExpress.evaluate(root, XPathConstants.NODESET);
+            if ((nodes != null) && (nodes.getLength() > 0)) {
+                final String urlPart = nodes.item(0).getAttributes().getNamedItem("href").getNodeValue();
+                final URL baseURL = new URL(sourceURL);
+                final String protocol = baseURL.getProtocol();
+                final String hostStr = baseURL.getHost();
+                final URL newURL = new URL(protocol, hostStr, urlPart);
+                nextURL = newURL.toString();
+            }
+            log.log(Level.INFO, "found " + nodes.getLength() + " atom:link nodes");
+        } catch (Exception exp) {
+            log.log(Level.SEVERE, exp.toString(), exp);
+        }
+
+        return nextURL;
+    }
+
+
+    private ParsedPage fetchParsedPage(String thePageUrl, int iteration) {
+        ParsedPage resultPage = null;
+
+        URLFetchService fetchService = URLFetchServiceFactory.getURLFetchService();
+
+        try {
+            String embedlyURL = "http://api.embed.ly/1/extract?key=16357551b6a84e6c88debee64dcd8bf3&maxwidth=500&url=" + URLEncoder.encode(thePageUrl, "UTF-8");
+            Future<HTTPResponse> responseFuture = fetchService.fetchAsync(new URL(embedlyURL));
+            HTTPResponse response = responseFuture.get(10, TimeUnit.SECONDS);
+
+            byte[] embedData = response.getContent();
+            String resultStr  = new String (embedData, "UTF-8");
+            if (response.getResponseCode() / 100 == 2) {
+                resultPage = new Gson().fromJson(resultStr, ParsedPage.class);
+            }
+
+        } catch (SocketTimeoutException timeOut) {
+            iteration++;
+            if (iteration < 3)
+                resultPage = fetchParsedPage(thePageUrl, iteration);
+        } catch (Exception exp) {
+            log.log(Level.SEVERE, exp.toString(), exp);
+        }
+
+        return resultPage;
+    }
+
+    private void importRssFeedToChannel(String channelId, String feedStr, String username, String password, Date cutoffDate, Boolean useSourceImage) {
+        String nextURL = extractNextPageURL(feedStr);
         try {
             String googleParserURL = "http://ajax.googleapis.com/ajax/services/feed/load?v=1.0&num=100&q=";
             String finalURL = googleParserURL + URLEncoder.encode(feedStr,"UTF-8");
+
 
             if (!SignInToHeard(username, password)) {
                 return;
@@ -195,7 +276,8 @@ public class ImportFeedToChannel extends HttpServlet {
 
             URLFetchService fetchService = URLFetchServiceFactory.getURLFetchService();
 
-            HTTPResponse fetchResponse = fetchService.fetch(new URL(finalURL));
+            Future<HTTPResponse> fetchResponseFuture = fetchService.fetchAsync(new URL(finalURL));
+            HTTPResponse fetchResponse = fetchResponseFuture.get(10, TimeUnit.SECONDS);
             byte[] theData = fetchResponse.getContent();
             String theJSON = new String (theData, "UTF-8");
 
@@ -210,22 +292,26 @@ public class ImportFeedToChannel extends HttpServlet {
                     if ((cutoffDate == null) || (curEntry.getPublishedDate().after(cutoffDate))) {
                         // date is good
                         log.log(Level.INFO, "using:" + curEntry.title + " - " + curEntry.link);
-                        String embedlyURL = "http://api.embed.ly/1/extract?key=16357551b6a84e6c88debee64dcd8bf3&maxwidth=500&url=" + URLEncoder.encode(curEntry.getLink(), "UTF-8");
-                        HTTPResponse embedlyResponse = fetchService.fetch(new URL(embedlyURL));
-                        byte[] embedData = embedlyResponse.getContent();
-                        String embedJSON = new String (embedData, "UTF-8");
+                        ParsedPage thePage = fetchParsedPage(curEntry.getLink(), 0);
 
-                        if (embedlyResponse.getResponseCode() / 100 == 2) {
-                            ParsedPage thePage = gson.fromJson(embedJSON, ParsedPage.class);
+                        if (thePage != null) {
+                            String imageUrl = null;
 
-                            if (thePage != null) {
-                                UploadPageAsNewBlah(thePage, channelId);
+                            if (useSourceImage) {
+                                if ((curEntry.mediaGroups != null) && (curEntry.mediaGroups.size() > 0)) {
+                                    MediaGroup firstGroup = curEntry.mediaGroups.get(0);
+                                    if ((firstGroup != null) && (firstGroup.contents != null) && (firstGroup.contents.size() > 0)) {
+                                        MediaContent content = firstGroup.contents.get(0);
+                                        if (content != null)
+                                            imageUrl = content.url;
+                                    }
+                                }
                             }
+
+                            UploadPageAsNewBlah(thePage, channelId, imageUrl);
                         } else {
-                            log.log(Level.SEVERE, "error parsing item: " +  embedJSON);
+                            log.log(Level.SEVERE, "error parsing item: " +  curEntry.getLink());
                         }
-
-
                     } else {
                         log.log(Level.INFO, "skipping existing item:" + curEntry.title + " - " + curEntry.link);
                         totalExistingItems++;
@@ -234,12 +320,26 @@ public class ImportFeedToChannel extends HttpServlet {
                 }
             }
 
+
+
         } catch (Exception exp) {
             log.log(Level.SEVERE, exp.toString(), exp);
         } finally {
             SignOutOfHeard();
         }
 
+        if (nextURL != null)
+            importRssFeedToChannel(channelId, nextURL, username, password, cutoffDate, useSourceImage);
+
+
+    }
+
+    private static String cleanUrlString(String sourceStr) {
+        int findLoc = sourceStr.indexOf('?');
+        if (findLoc != -1)
+            return sourceStr.substring(0, findLoc);
+        else
+            return sourceStr;
     }
 
 
@@ -417,7 +517,7 @@ public class ImportFeedToChannel extends HttpServlet {
         sendJsonPostRequest(theURL, jsonData, true);
     }
 
-    private void UploadPageAsNewBlah(ParsedPage thePage, String channelId)
+    private void UploadPageAsNewBlah(ParsedPage thePage, String channelId, String altImageUrl)
     {
         String title = thePage.getTitle();
         String body = thePage.getDescription();
@@ -429,13 +529,17 @@ public class ImportFeedToChannel extends HttpServlet {
         if (body == null)
             body = "";
 
-        if ((thePage.getImages() != null) && (!thePage.getImages().isEmpty())) {
-            Images curImage = thePage.getImages().get(0);
+        if ((altImageUrl == null) || (altImageUrl.isEmpty())) {
+            if ((thePage.getImages() != null) && (!thePage.getImages().isEmpty())) {
+                Images curImage = thePage.getImages().get(0);
 
-            if ((curImage != null) && (curImage.getWidth().intValue() + curImage.getHeight().intValue() > 256)) {
-                // convert this URL into a proper image
-                theImageURL = FetchAndStoreImageURL(curImage.getUrl());
+                if ((curImage != null) && (curImage.getWidth().intValue() + curImage.getHeight().intValue() > 256)) {
+                    // convert this URL into a proper image
+                    theImageURL = FetchAndStoreImageURL(curImage.getUrl());
+                }
             }
+        } else {
+            theImageURL = altImageUrl;
         }
 
         CreateImportBlah(channelId, title, body, theImageURL, theURL);
@@ -477,7 +581,7 @@ public class ImportFeedToChannel extends HttpServlet {
 
         if ((imageURL != null) && (!imageURL.isEmpty())) {
             List<String> mediaList = new ArrayList<String>();
-            mediaList.add(imageURL);
+            mediaList.add(cleanUrlString(imageURL));
             newBlah.M = mediaList;
         } else
             newBlah.M = null;

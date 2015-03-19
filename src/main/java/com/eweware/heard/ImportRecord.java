@@ -17,6 +17,7 @@ public class ImportRecord {
     public String importusername;
     public String importpassword;
     public String RSSurl;
+    public Boolean usefeedimage;
     public String titlefield;
     public String imagefield;
     public String bodyfield;

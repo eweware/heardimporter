@@ -15,6 +15,7 @@ public class Entries{
     public String link;
     public String publishedDate;
     public String title;
+    public List<MediaGroup> mediaGroups;
 
  	public String getAuthor(){
 		return this.author;
