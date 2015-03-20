@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <cronentries>
     <cron>
-        <url>/api/importFeedToChannel</url>
+        <url>/api/importAllFeeds</url>
         <description>Check feeds for new items</description>
-        <schedule>every 30 minutes</schedule>
+        <schedule>every 60 minutes</schedule>
     </cron>
 
 </cronentries>

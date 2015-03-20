@@ -11,8 +11,8 @@
         <servlet-class>com.eweware.heardimporter.ImportChannel</servlet-class>
     </servlet>
     <servlet>
-        <servlet-name>ImportFeed</servlet-name>
-        <servlet-class>com.eweware.heardimporter.ImportFeed</servlet-class>
+        <servlet-name>ImportAllFeeds</servlet-name>
+        <servlet-class>com.eweware.heardimporter.ImportAllFeeds</servlet-class>
     </servlet>
     <servlet>
         <servlet-name>ImportOneChannel</servlet-name>
@@ -35,8 +35,8 @@
     </servlet-mapping>
 
     <servlet-mapping>
-        <servlet-name>ImportFeed</servlet-name>
-        <url-pattern>/api/importFeed</url-pattern>
+        <servlet-name>ImportAllFeeds</servlet-name>
+        <url-pattern>/api/importAllFeeds</url-pattern>
     </servlet-mapping>
 
     <servlet-mapping>
