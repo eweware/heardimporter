@@ -16,12 +16,21 @@ public class ImportRecord {
     public String channel;
     public String importusername;
     public String importpassword;
+
+    // rss fields
     public String RSSurl;
     public Boolean usefeedimage;
     public String titlefield;
     public String imagefield;
     public String bodyfield;
     public String urlfield;
+
+    // twitter fields
+    public String twittername;
+
+    // DeviantArt fields
+    public String searchpath;
+
     public String lastimport;
     public Integer importfrequency;
     public Integer feedtype;

@@ -1,15 +1,18 @@
 package com.eweware.heardimporter;
 
+import com.eweware.DeviantArt.DeviantArtImporter;
+import com.eweware.RSS.RSSImporter;
 import com.eweware.feedimport.*;
 import com.eweware.heard.*;
+import com.eweware.twitter.TwitterImporter;
 import com.google.appengine.api.urlfetch.*;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import org.w3c.dom.Element;
 
-import javax.servlet.http.HttpServletResponse;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.xpath.XPath;
@@ -47,6 +50,9 @@ public class ImportHelper {
     private  Integer totalNewItems = 0;
     private  Integer totalExistingItems = 0;
     private  String sessionCookie = "";
+    private RSSImporter rssImporter = null;
+    private TwitterImporter twitterImporter = null;
+    private DeviantArtImporter deviantArtImporter = null;
 
 
     public ImportHelper(String server, String adminUser, String adminPassword) throws Exception {
@@ -141,8 +147,16 @@ public class ImportHelper {
                 String password = theRecord.importpassword;
 
                 if ((!userName.isEmpty()) && (!password.isEmpty())) {
-                    if (theRecord.feedtype == 0) {
-                        processRSSImportRecord(theRecord);
+                    switch (theRecord.feedtype) {
+                        case 0: // RSS
+                            processRSSImportRecord(theRecord);
+                            break;
+                        case 1: // Twitter
+                            processTwitterImportRecord(theRecord);
+                            break;
+                        case 2: // DeviantArt
+                            processDeviantArtImportRecord(theRecord);
+                            break;
                     }
                 }
             }
@@ -153,12 +167,43 @@ public class ImportHelper {
 
     private void processRSSImportRecord(ImportRecord theRecord) {
         try {
+            if (rssImporter == null)
+                rssImporter = new RSSImporter();
+
             Date cutoffDate = theRecord.getLastImportDate();
             Boolean useSourceImage = theRecord.usefeedimage;
             if (useSourceImage == null)
                 useSourceImage = false;
 
             importRssFeedToChannel(theRecord.channel, theRecord.RSSurl, theRecord.importusername, theRecord.importpassword, cutoffDate, useSourceImage);
+            UpdateLastImportDate(theRecord);
+        } catch (Exception exp) {
+            log.log(Level.SEVERE, exp.toString(), exp);
+        }
+    }
+
+    private void processTwitterImportRecord(ImportRecord theRecord) {
+        try {
+            if (twitterImporter == null)
+                twitterImporter = new TwitterImporter();
+            Date cutoffDate = theRecord.getLastImportDate();
+            Boolean useSourceImage = theRecord.usefeedimage;
+            if (useSourceImage == null)
+                useSourceImage = false;
+
+            importTwitterFeedToChannel(theRecord.channel, theRecord.twittername, theRecord.importusername, theRecord.importpassword, cutoffDate, useSourceImage);
+            UpdateLastImportDate(theRecord);
+        } catch (Exception exp) {
+            log.log(Level.SEVERE, exp.toString(), exp);
+        }
+    }
+
+    private void processDeviantArtImportRecord(ImportRecord theRecord) {
+        try {
+            if (deviantArtImporter == null)
+                deviantArtImporter = new DeviantArtImporter();
+
+            importDeviantArtFeedToChannel(theRecord.channel, theRecord.searchpath, theRecord.importusername, theRecord.importpassword);
             UpdateLastImportDate(theRecord);
         } catch (Exception exp) {
             log.log(Level.SEVERE, exp.toString(), exp);
@@ -183,36 +228,6 @@ public class ImportHelper {
                 SignOutOfHeard();
             }
         }
-    }
-
-    private String extractNextPageURL(String sourceURL) {
-        String nextURL = null;
-        try {
-            DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-            DocumentBuilder db = dbf.newDocumentBuilder();
-            Document doc = db.parse(sourceURL);
-            doc.getDocumentElement().normalize();
-            Node root = doc.getDocumentElement();
-
-            XPathFactory xFactory = XPathFactory.newInstance();
-            XPath xPath = xFactory.newXPath();
-
-            XPathExpression xExpress = xPath.compile("/rss/channel/*[local-name()='link'][@rel='next']");
-            NodeList nodes = (NodeList) xExpress.evaluate(root, XPathConstants.NODESET);
-            if ((nodes != null) && (nodes.getLength() > 0)) {
-                final String urlPart = nodes.item(0).getAttributes().getNamedItem("href").getNodeValue();
-                final URL baseURL = new URL(sourceURL);
-                final String protocol = baseURL.getProtocol();
-                final String hostStr = baseURL.getHost();
-                final URL newURL = new URL(protocol, hostStr, urlPart);
-                nextURL = newURL.toString();
-            }
-            log.log(Level.INFO, "found " + nodes.getLength() + " atom:link nodes");
-        } catch (Exception exp) {
-            log.log(Level.SEVERE, exp.toString(), exp);
-        }
-
-        return nextURL;
     }
 
 
@@ -253,72 +268,79 @@ public class ImportHelper {
     }
 
     private void importRssFeedToChannel(String channelId, String feedStr, String username, String password, Date cutoffDate, Boolean useSourceImage) {
-        String nextURL = extractNextPageURL(feedStr);
+
+        List<Entry> theEntries = rssImporter.parseRSSFeed(feedStr, cutoffDate, useSourceImage, 500);
+
         try {
-            String googleParserURL = "http://ajax.googleapis.com/ajax/services/feed/load?v=1.0&num=100&q=";
-            String finalURL = googleParserURL + URLEncoder.encode(feedStr,"UTF-8");
+            SignInToHeard(username, password);
+            for (Entry curEntry : theEntries) {
+                ParsedPage thePage = fetchParsedPage(curEntry.getLink(), 0);
 
+                if (thePage != null) {
+                    String imageUrl = null;
 
-            if (!SignInToHeard(username, password)) {
-                return;
-            }
-
-            URLFetchService fetchService = URLFetchServiceFactory.getURLFetchService();
-
-            Future<HTTPResponse> fetchResponseFuture = fetchService.fetchAsync(new URL(finalURL));
-            HTTPResponse fetchResponse = fetchResponseFuture.get(10, TimeUnit.SECONDS);
-            byte[] theData = fetchResponse.getContent();
-            String theJSON = new String (theData, "UTF-8");
-
-            Gson gson = new Gson();
-            Response feedResponse = gson.fromJson(theJSON, Response.class);
-
-            if ((feedResponse != null) && (feedResponse.responseData != null) &&
-                    (feedResponse.responseData.feed != null) && (feedResponse.responseData.feed.entries != null)) {
-                // we have data, now load it!
-                for (Entries curEntry : feedResponse.responseData.feed.entries) {
-                    //Entries curEntry = (Entries)curObj;
-                    if ((cutoffDate == null) || (curEntry.getPublishedDate().after(cutoffDate))) {
-                        // date is good
-                        log.log(Level.INFO, "using:" + curEntry.title + " - " + curEntry.link);
-                        ParsedPage thePage = fetchParsedPage(curEntry.getLink(), 0);
-
-                        if (thePage != null) {
-                            String imageUrl = null;
-
-                            if (useSourceImage) {
-                                if ((curEntry.mediaGroups != null) && (curEntry.mediaGroups.size() > 0)) {
-                                    MediaGroup firstGroup = curEntry.mediaGroups.get(0);
-                                    if ((firstGroup != null) && (firstGroup.contents != null) && (firstGroup.contents.size() > 0)) {
-                                        MediaContent content = firstGroup.contents.get(0);
-                                        if (content != null)
-                                            imageUrl = content.url;
-                                    }
-                                }
-                            }
-
-                            UploadPageAsNewBlah(thePage, channelId, imageUrl);
-                        } else {
-                            log.log(Level.SEVERE, "error parsing item: " +  curEntry.getLink());
-                        }
-                    } else {
-                        log.log(Level.INFO, "skipping existing item:" + curEntry.title + " - " + curEntry.link);
-                        totalExistingItems++;
+                    if (useSourceImage) {
+                        imageUrl = curEntry.getImage();
                     }
 
+                    UploadPageAsNewBlah(thePage, channelId, imageUrl);
+                } else {
+                    log.log(Level.SEVERE, "error parsing item: " + curEntry.getLink());
                 }
             }
-
-
-
         } catch (Exception exp) {
             log.log(Level.SEVERE, exp.toString(), exp);
         } finally {
             SignOutOfHeard();
         }
 
-        if (nextURL != null)
-            importRssFeedToChannel(channelId, nextURL, username, password, cutoffDate, useSourceImage);
+
+    }
+
+    private void importTwitterFeedToChannel(String channelId, String twitterName, String username, String password, Date cutoffDate, Boolean useSourceImage) {
+        List<Entry> theEntries = twitterImporter.parseTwitterFeed(twitterName, cutoffDate, 500, false);
+
+        try {
+            SignInToHeard(username, password);
+            // we have data, now load it!
+            for (Entry curEntry : theEntries) {
+                if ((curEntry.getLink() != null) && (!curEntry.getLink().isEmpty())) {
+                    ParsedPage thePage = fetchParsedPage(curEntry.getLink(), 0);
+
+                    if (thePage != null) {
+                        UploadPageAsNewBlah(thePage, channelId, null);
+                    } else {
+                        log.log(Level.SEVERE, "error parsing item: " + curEntry.getLink());
+                    }
+                }
+            }
+        } catch (Exception exp) {
+            log.log(Level.SEVERE, exp.toString(), exp);
+        } finally {
+            SignOutOfHeard();
+        }
+
+    }
+
+    private void importDeviantArtFeedToChannel(String channelId, String daSearch, String username, String password) {
+        List<Entry> theEntries = deviantArtImporter.DoDAImport(daSearch, 100 );
+
+        try {
+            SignInToHeard(username, password);
+            // we have data, now load it!
+            // we have data, now load it!
+            for (Entry curEntry : theEntries) {
+                if ((curEntry.getLink() != null) && (!curEntry.getLink().isEmpty())) {
+                    UploadDAEntryNewBlah(curEntry, channelId);
+
+                }
+            }
+        } catch (Exception exp) {
+            log.log(Level.SEVERE, exp.toString(), exp);
+        } finally {
+            SignOutOfHeard();
+        }
+
 
 
     }
@@ -529,11 +551,32 @@ public class ImportHelper {
 
                 if ((curImage != null) && (curImage.getWidth().intValue() + curImage.getHeight().intValue() > 256)) {
                     // convert this URL into a proper image
-                    theImageURL = FetchAndStoreImageURL(curImage.getUrl());
+                    theImageURL = FetchAndStoreImageURL(cleanUrlString(curImage.getUrl()));
                 }
             }
         } else {
-            theImageURL = altImageUrl;
+            theImageURL = FetchAndStoreImageURL(cleanUrlString(altImageUrl));
+        }
+
+        CreateImportBlah(channelId, title, body, theImageURL, theURL);
+
+    }
+
+    private void UploadDAEntryNewBlah(Entry theEntry, String channelId)
+    {
+        String title = null;
+        String body = theEntry.getTitle();
+        String theURL = theEntry.getLink();
+        String theImageURL = theEntry.getImage();
+
+        if (title == null)
+            title = "";
+        if (body == null)
+            body = "";
+
+        if ((theImageURL != null) && (!theImageURL.isEmpty())) {
+            // convert this URL into a proper image
+            theImageURL = FetchAndStoreImageURL(cleanUrlString(theImageURL));
         }
 
         CreateImportBlah(channelId, title, body, theImageURL, theURL);

@@ -7,46 +7,27 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
-public class Entries{
-   	private String author;
-   	private List categories;
-   	private String content;
-   	private String contentSnippet;
+public class Entry {
     public String link;
     public String publishedDate;
     public String title;
-    public List<MediaGroup> mediaGroups;
+    public String image;
 
- 	public String getAuthor(){
-		return this.author;
-	}
-	public void setAuthor(String author){
-		this.author = author;
-	}
- 	public List getCategories(){
-		return this.categories;
-	}
-	public void setCategories(List categories){
-		this.categories = categories;
-	}
- 	public String getContent(){
-		return this.content;
-	}
-	public void setContent(String content){
-		this.content = content;
-	}
- 	public String getContentSnippet(){
-		return this.contentSnippet;
-	}
-	public void setContentSnippet(String contentSnippet){
-		this.contentSnippet = contentSnippet;
-	}
+
+
+    public String getImage(){ return this.image; }
+    public void setImage(String newImage){
+        this.image = newImage;
+    }
+
+
  	public String getLink(){
 		return this.link;
 	}
 	public void setLink(String link){
 		this.link = link;
 	}
+
  	public Date getPublishedDate(){
         Date theDate = null;
         SimpleDateFormat dateFormat = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.ENGLISH);
@@ -62,6 +43,7 @@ public class Entries{
 	public void setPublishedDate(String publishedDate){
 		this.publishedDate = publishedDate;
 	}
+
  	public String getTitle(){
 		return this.title;
 	}
