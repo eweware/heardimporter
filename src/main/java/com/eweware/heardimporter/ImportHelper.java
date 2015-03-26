@@ -529,11 +529,11 @@ public class ImportHelper {
 
                 if ((curImage != null) && (curImage.getWidth().intValue() + curImage.getHeight().intValue() > 256)) {
                     // convert this URL into a proper image
-                    theImageURL = FetchAndStoreImageURL(curImage.getUrl());
+                    theImageURL = FetchAndStoreImageURL(cleanUrlString(curImage.getUrl()));
                 }
             }
         } else {
-            theImageURL = altImageUrl;
+            theImageURL = FetchAndStoreImageURL(cleanUrlString(altImageUrl));
         }
 
         CreateImportBlah(channelId, title, body, theImageURL, theURL);
