@@ -577,6 +577,7 @@ public class ImportHelper {
         if ((theImageURL != null) && (!theImageURL.isEmpty())) {
             // convert this URL into a proper image
             theImageURL = FetchAndStoreImageURL(cleanUrlString(theImageURL));
+
         }
 
         CreateImportBlah(channelId, title, body, theImageURL, theURL);
