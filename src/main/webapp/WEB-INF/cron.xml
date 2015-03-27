@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <cronentries>
     <cron>
-        <url>/api/importAllFeeds</url>
+        <url>/api/importAllFeeds?server=prod</url>
         <description>Check feeds for new items</description>
         <schedule>every 60 minutes</schedule>
     </cron>

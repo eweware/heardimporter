@@ -112,7 +112,7 @@ public class ImportHelper {
 
 
 
-        private void importChannels(List<Channel> channelList) {
+    private void importChannels(List<Channel> channelList) {
         try {
             for (Channel curChannel : channelList) {
                 log.log(Level.INFO, "importing channel " + curChannel.N);
@@ -271,30 +271,30 @@ public class ImportHelper {
 
         List<Entry> theEntries = rssImporter.parseRSSFeed(feedStr, cutoffDate, useSourceImage, 500);
 
-        try {
-            SignInToHeard(username, password);
-            for (Entry curEntry : theEntries) {
-                ParsedPage thePage = fetchParsedPage(curEntry.getLink(), 0);
+        if ((theEntries != null) && (theEntries.size() > 0)) {
+            try {
+                SignInToHeard(username, password);
+                for (Entry curEntry : theEntries) {
+                    ParsedPage thePage = fetchParsedPage(curEntry.getLink(), 0);
 
-                if (thePage != null) {
-                    String imageUrl = null;
+                    if (thePage != null) {
+                        String imageUrl = null;
 
-                    if (useSourceImage) {
-                        imageUrl = curEntry.getImage();
+                        if (useSourceImage) {
+                            imageUrl = curEntry.getImage();
+                        }
+
+                        UploadPageAsNewBlah(thePage, channelId, imageUrl);
+                    } else {
+                        log.log(Level.SEVERE, "error parsing item: " + curEntry.getLink());
                     }
-
-                    UploadPageAsNewBlah(thePage, channelId, imageUrl);
-                } else {
-                    log.log(Level.SEVERE, "error parsing item: " + curEntry.getLink());
                 }
+            } catch (Exception exp) {
+                log.log(Level.SEVERE, exp.toString(), exp);
+            } finally {
+                SignOutOfHeard();
             }
-        } catch (Exception exp) {
-            log.log(Level.SEVERE, exp.toString(), exp);
-        } finally {
-            SignOutOfHeard();
         }
-
-
     }
 
     private void importTwitterFeedToChannel(String channelId, String twitterName, String username, String password, Date cutoffDate, Boolean useSourceImage) {
@@ -551,11 +551,11 @@ public class ImportHelper {
 
                 if ((curImage != null) && (curImage.getWidth().intValue() + curImage.getHeight().intValue() > 256)) {
                     // convert this URL into a proper image
-                    theImageURL = FetchAndStoreImageURL(cleanUrlString(curImage.getUrl()));
+                    theImageURL = FetchAndStoreImageURL(cleanUrlString(curImage.getUrl()), 0);
                 }
             }
         } else {
-            theImageURL = FetchAndStoreImageURL(cleanUrlString(altImageUrl));
+            theImageURL = FetchAndStoreImageURL(cleanUrlString(altImageUrl), 0);
         }
 
         CreateImportBlah(channelId, title, body, theImageURL, theURL);
@@ -576,7 +576,7 @@ public class ImportHelper {
 
         if ((theImageURL != null) && (!theImageURL.isEmpty())) {
             // convert this URL into a proper image
-            theImageURL = FetchAndStoreImageURL(cleanUrlString(theImageURL));
+            theImageURL = FetchAndStoreImageURL(cleanUrlString(theImageURL), 0);
 
         }
 
@@ -584,17 +584,28 @@ public class ImportHelper {
 
     }
 
-    private String FetchAndStoreImageURL(String srcURL)  {
+    private String FetchAndStoreImageURL(String srcURL, int retryCount)  {
         String finalURL = "";
         try {
             String jsonData = "imageurl=" + URLEncoder.encode(srcURL, "UTF-8");
             finalURL = sendJsonPostRequest("http://heard-test-001.appspot.com/api/image/url", jsonData, false);
             log.log(Level.INFO, "converted image: " + finalURL);
-            if ((finalURL == null) || (finalURL.isEmpty()))
+            if ((finalURL == null) || (finalURL.isEmpty())) {
+                finalURL = "";
                 log.log(Level.SEVERE, "image conversion failed!");
+            }
         } catch (Exception exp) {
             log.log(Level.SEVERE, exp.toString(), exp);
         }
+
+        if (finalURL.isEmpty()) {
+            retryCount++;
+            if (retryCount < 3) {
+                finalURL = FetchAndStoreImageURL(srcURL, retryCount);
+                log.log(Level.INFO, "retrying image conversion...");
+            }
+        }
+
 
 
         return finalURL;

@@ -31,7 +31,7 @@ public class ImportAllFeeds extends HttpServlet {
                 PrintWriter out = response.getWriter();
 
                 out.write(resultStr);
-                log.log(Level.INFO, resultStr);
+                log.log(Level.SEVERE, resultStr);
                 out.flush();
                 out.close();
 
