@@ -552,6 +552,10 @@ public class ImportHelper {
                 if ((curImage != null) && (curImage.getWidth().intValue() + curImage.getHeight().intValue() > 256)) {
                     // convert this URL into a proper image
                     theImageURL = FetchAndStoreImageURL(cleanUrlString(curImage.getUrl()), 0);
+                    if (theImageURL == null) {
+                        // image parse - try unclean URL
+                        theImageURL = FetchAndStoreImageURL(curImage.getUrl(), 0);
+                    }
                 }
             }
         } else {
@@ -593,6 +597,10 @@ public class ImportHelper {
             if ((finalURL == null) || (finalURL.isEmpty())) {
                 finalURL = "";
                 log.log(Level.SEVERE, "image conversion failed!");
+            } else if (!finalURL.startsWith("http")) {
+                finalURL = "";
+                log.log(Level.SEVERE, "Image in bad format");
+                return null;
             }
         } catch (Exception exp) {
             log.log(Level.SEVERE, exp.toString(), exp);
