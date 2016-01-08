@@ -648,7 +648,7 @@ public class ImportHelper {
 
         Gson gson = new Gson();
         String jsonStr = gson.toJson(newBlah, Blah.class);
-        String createUrl = HeardServerURL + "blahs";
+        String createUrl = HeardServerURL + "blahs/new";
         String resultStr = sendJsonPostRequest(createUrl, jsonStr, true);
         totalNewItems++;
 
